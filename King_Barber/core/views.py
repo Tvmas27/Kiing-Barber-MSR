@@ -7,6 +7,13 @@ from firebase_admin import firestore
 import csv
 import datetime
 
+
+def get_firestore_client():
+    try:
+        return firestore.client()
+    except Exception:
+        return None
+
 def index(request):
     return render(request, 'core/home.html')
 
@@ -15,7 +22,9 @@ class DashboardDataView(APIView):
 
     def get(self, request):
         try:
-            db = firestore.client()
+            db = get_firestore_client()
+            if db is None:
+                return Response({"status": "success", "count": 0, "reservas": []})
             reservas_ref = db.collection('reservas')
             docs = reservas_ref.stream()
             
@@ -41,7 +50,9 @@ class ReservaDetailView(APIView):
 
     def delete(self, request, doc_id):
         try:
-            db = firestore.client()
+            db = get_firestore_client()
+            if db is None:
+                return Response({"status": "error", "message": "Firebase no está configurado en este entorno"}, status=503)
             db.collection('reservas').document(doc_id).delete()
             return Response({"status": "success", "message": "Reserva eliminada"})
         except Exception as e:
@@ -68,7 +79,9 @@ class CrearReservaView(APIView):
                 'telefono': data['telefono'].strip()
             }
 
-            db = firestore.client()
+            db = get_firestore_client()
+            if db is None:
+                return Response({"status": "error", "message": "Firebase no está configurado en este entorno"}, status=503)
             
             # Verificar si el día está bloqueado
             bloqueo_ref = db.collection('dias_bloqueados').document(clean_data['dia'])
@@ -100,7 +113,9 @@ class ObtenerHorasOcupadasView(APIView):
             return Response({"status": "error", "message": "Falta el parámetro 'dia'"}, status=400)
         
         try:
-            db = firestore.client()
+            db = get_firestore_client()
+            if db is None:
+                return Response({"status": "success", "dia": dia, "horas_ocupadas": [], "bloqueado": False})
             
             # Verificar si el día está bloqueado
             bloqueo_ref = db.collection('dias_bloqueados').document(dia)
@@ -144,7 +159,9 @@ class CancelarReservaView(APIView):
             if not all([nombre, telefono, dia, hora]):
                 return Response({"status": "error", "message": "Faltan datos para cancelar"}, status=400)
 
-            db = firestore.client()
+            db = get_firestore_client()
+            if db is None:
+                return Response({"status": "error", "message": "Firebase no está configurado en este entorno"}, status=503)
             # Buscar la reserva por teléfono, día y hora (datos más exactos)
             reservas = db.collection('reservas')\
                 .where('telefono', '==', telefono)\
@@ -183,7 +200,9 @@ class ExportarReservasView(APIView):
         writer.writerow(['ID', 'Nombre', 'Servicio', 'Día', 'Hora', 'Teléfono', 'Creado En'])
 
         try:
-            db = firestore.client()
+            db = get_firestore_client()
+            if db is None:
+                return HttpResponse("Firebase no está configurado en este entorno", status=503)
             reservas = db.collection('reservas').stream()
 
             for doc in reservas:
@@ -219,7 +238,9 @@ class BloquearDiaView(APIView):
             if not dia:
                 return Response({"status": "error", "message": "Falta el día"}, status=400)
                 
-            db = firestore.client()
+            db = get_firestore_client()
+            if db is None:
+                return Response({"status": "error", "message": "Firebase no está configurado en este entorno"}, status=503)
             db.collection('dias_bloqueados').document(dia).set({
                 'dia': dia,
                 'motivo': motivo,
@@ -238,7 +259,9 @@ class BloquearDiaView(APIView):
             if not dia:
                 return Response({"status": "error", "message": "Falta el día"}, status=400)
                 
-            db = firestore.client()
+            db = get_firestore_client()
+            if db is None:
+                return Response({"status": "error", "message": "Firebase no está configurado en este entorno"}, status=503)
             db.collection('dias_bloqueados').document(dia).delete()
             
             return Response({"status": "success", "message": f"Día {dia} desbloqueado"})
@@ -250,7 +273,9 @@ class ObtenerDiasBloqueadosView(APIView):
 
     def get(self, request):
         try:
-            db = firestore.client()
+            db = get_firestore_client()
+            if db is None:
+                return Response({"status": "success", "dias": []})
             docs = db.collection('dias_bloqueados').stream()
             
             bloqueados = []
@@ -270,9 +295,11 @@ class CustomLoginView(APIView):
         username = request.data.get('username')
         password = request.data.get('password')
         
-        # Credenciales desde variables de entorno (o valores por defecto seguros)
-        admin_user = os.getenv('ADMIN_USER', 'admin')
-        admin_pass = os.getenv('ADMIN_PASS', 'admin123') # ¡Cámbialo en producción!
+        admin_user = os.getenv('ADMIN_USER')
+        admin_pass = os.getenv('ADMIN_PASS')
+
+        if not admin_user or not admin_pass:
+            return Response({"detail": "Dashboard credentials are not configured"}, status=503)
 
         if username == admin_user and password == admin_pass:
             # Crear o recuperar un usuario "dummy" en Django para generar el token
@@ -283,7 +310,7 @@ class CustomLoginView(APIView):
                     user.set_unusable_password()
                     user.save()
             except Exception:
-                # Si falla la DB (ej. en Heroku sin Postgres), usamos un token manual o simulado
+                # Si falla la DB, usamos un token manual o simulado
                 # Pero para mantener compatibilidad con el frontend que espera JWT:
                 return Response({
                     "access": "token-dummy-acceso-permitido",

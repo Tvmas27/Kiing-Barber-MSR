@@ -21,16 +21,34 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def env_bool(name, default=False):
+    return os.getenv(name, str(default)).strip().lower() == 'true'
+
+
+def env_list(name, default=''):
+    return [item.strip() for item in os.getenv(name, default).split(',') if item.strip()]
+
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-26i9ta$kcj$8s_r7y=*-w=z(ozw*6&y3j*ru&678&$tvpbyqj!')
+if env_bool('DEBUG', True):
+    SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-26i9ta$kcj$8s_r7y=*-w=z(ozw*6&y3j*ru&678&$tvpbyqj!')
+else:
+    SECRET_KEY = os.getenv('SECRET_KEY')
+    if not SECRET_KEY:
+        raise RuntimeError('SECRET_KEY must be set when DEBUG=False')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv('DEBUG', 'False') == 'True'
+DEBUG = env_bool('DEBUG', True)
 
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '127.0.0.1,localhost').split(',')
+ALLOWED_HOSTS = env_list('ALLOWED_HOSTS', '127.0.0.1,localhost')
+
+if not DEBUG:
+    render_host = os.getenv('RENDER_EXTERNAL_HOSTNAME')
+    if render_host and render_host not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(render_host)
 
 
 # Application definition
@@ -148,14 +166,16 @@ CORS_ALLOW_ALL_ORIGINS = DEBUG
 
 if not DEBUG:
     # Obtener variables y filtrar cadenas vacías
-    cors_origins = os.getenv('CORS_ALLOWED_ORIGINS', '').split(',')
-    CORS_ALLOWED_ORIGINS = [origin.strip() for origin in cors_origins if origin.strip()]
+    CORS_ALLOWED_ORIGINS = env_list('CORS_ALLOWED_ORIGINS')
     
-    csrf_origins = os.getenv('CSRF_TRUSTED_ORIGINS', '').split(',')
-    CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in csrf_origins if origin.strip()]
+    CSRF_TRUSTED_ORIGINS = env_list('CSRF_TRUSTED_ORIGINS')
     
     # Seguridad adicional para producción
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     SECURE_SSL_REDIRECT = True
+    SECURE_HSTS_SECONDS = int(os.getenv('SECURE_HSTS_SECONDS', '31536000'))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SECURE_BROWSER_XSS_FILTER = True
