@@ -2,6 +2,8 @@
 
 Aplicación web para gestión de citas de una barbería, construida con Django y Firebase.
 
+> **Estado:** ✅ Listo para producción
+
 ## Resumen
 
 El proyecto incluye una landing pública, un formulario de reservas, un dashboard de administración y una API interna para consultar, crear, cancelar y exportar reservas.
