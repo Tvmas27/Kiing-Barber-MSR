@@ -56,6 +56,9 @@
 
         <!-- Actions -->
         <div class="lg:col-span-3 flex flex-wrap gap-3 justify-end items-center">
+            <button onclick="toggleScheduleModal()" class="bg-blue-900/30 text-blue-300 border border-blue-900 px-4 py-2 rounded hover:bg-blue-900/50 transition-colors flex items-center gap-2 text-sm font-bold">
+                <i class="fas fa-sliders-h"></i> Horario Semanal
+            </button>
             <button onclick="toggleBlockDayModal()" class="bg-red-900/30 text-red-400 border border-red-900 px-4 py-2 rounded hover:bg-red-900/50 transition-colors flex items-center gap-2 text-sm font-bold">
                 <i class="fas fa-ban"></i> Bloquear Día
             </button>
@@ -122,6 +125,38 @@
         <div class="md:hidden space-y-4 p-4" id="reservas-mobile-list">
             <!-- Cards injected by JS -->
         </div>
+    </div>
+</div>
+
+<!-- Weekly Schedule Modal -->
+<div id="schedule-modal" class="fixed inset-0 bg-black/90 hidden flex items-center justify-center z-50 p-4">
+    <div class="bg-gris-oscuro border border-dorado p-6 rounded-lg w-full max-w-2xl shadow-2xl relative">
+        <button onclick="toggleScheduleModal()" class="absolute top-4 right-4 text-gray-400 hover:text-white">
+            <i class="fas fa-times"></i>
+        </button>
+
+        <h3 class="text-xl text-dorado font-bold mb-2">Configurar Horario Semanal</h3>
+        <p class="text-gray-400 text-sm mb-5">Define para cada día si está activo y su rango de atención. Las reservas y bloqueos respetarán esta configuración.</p>
+
+        <form id="schedule-form" class="space-y-4">
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm text-left text-gray-300">
+                    <thead class="text-dorado uppercase text-xs border-b border-gris-borde">
+                        <tr>
+                            <th class="py-2 pr-3">Día</th>
+                            <th class="py-2 pr-3">Activo</th>
+                            <th class="py-2 pr-3">Inicio</th>
+                            <th class="py-2">Fin</th>
+                        </tr>
+                    </thead>
+                    <tbody id="schedule-table-body"></tbody>
+                </table>
+            </div>
+
+            <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3 rounded hover:bg-blue-700 transition-colors">
+                GUARDAR HORARIO
+            </button>
+        </form>
     </div>
 </div>
 
@@ -209,15 +244,102 @@
     const loginError = document.getElementById('login-error');
     const logoutBtn = document.getElementById('logout-btn');
     const logoutBtnHeader = document.getElementById('logout-btn-header');
+    const scheduleModal = document.getElementById('schedule-modal');
+    const scheduleTableBody = document.getElementById('schedule-table-body');
     const blockHourModal = document.getElementById('block-hour-modal');
+    const blockHourDateInput = document.getElementById('block-hour-date');
     const blockHourTimeSelect = document.getElementById('block-hour-time');
-    const ADMIN_AVAILABLE_HOURS = [
-        "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00"
-    ];
+    const DAY_NAMES = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
     
     let allReservations = [];
     let blockedDays = [];
     let blockedHours = [];
+    let weeklySchedule = {};
+
+    function buildHourOptions(selectedHour) {
+        let options = '';
+        for (let hour = 0; hour <= 23; hour++) {
+            const value = `${String(hour).padStart(2, '0')}:00`;
+            const selected = value === selectedHour ? 'selected' : '';
+            options += `<option value="${value}" ${selected}>${value}</option>`;
+        }
+        return options;
+    }
+
+    function renderScheduleTable() {
+        scheduleTableBody.innerHTML = '';
+
+        for (let day = 0; day <= 6; day++) {
+            const key = String(day);
+            const cfg = weeklySchedule[key] || { activo: true, inicio: '11:00', fin: '17:00' };
+            const tr = document.createElement('tr');
+            tr.className = 'border-b border-gris-borde/40';
+            tr.innerHTML = `
+                <td class="py-2 pr-3 text-white font-bold">${DAY_NAMES[day]}</td>
+                <td class="py-2 pr-3">
+                    <input type="checkbox" data-day="${key}" data-field="activo" ${cfg.activo ? 'checked' : ''} class="h-4 w-4 accent-dorado">
+                </td>
+                <td class="py-2 pr-3">
+                    <select data-day="${key}" data-field="inicio" class="w-full p-2 rounded bg-negro border border-gris-borde text-white">${buildHourOptions(cfg.inicio)}</select>
+                </td>
+                <td class="py-2">
+                    <select data-day="${key}" data-field="fin" class="w-full p-2 rounded bg-negro border border-gris-borde text-white">${buildHourOptions(cfg.fin)}</select>
+                </td>
+            `;
+            scheduleTableBody.appendChild(tr);
+        }
+    }
+
+    async function fetchWeeklySchedule(token) {
+        try {
+            const response = await fetch('/api/reservas/horarios/', {
+                headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+            });
+            const data = await response.json();
+            if (data.status === 'success' && data.dias) {
+                weeklySchedule = data.dias;
+                renderScheduleTable();
+            }
+        } catch (error) {
+            console.error('Error loading weekly schedule:', error);
+        }
+    }
+
+    async function fetchAvailableHoursForDate(dateStr, token) {
+        if (!dateStr) return [];
+        try {
+            const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+            const response = await fetch(`/api/reservas/horarios/?dia=${dateStr}`, { headers });
+            const data = await response.json();
+            if (data.status === 'success') {
+                return data.horas_disponibles || [];
+            }
+        } catch (error) {
+            console.error('Error loading available hours by date:', error);
+        }
+        return [];
+    }
+
+    async function populateBlockHourOptions(dateStr) {
+        const token = localStorage.getItem('access_token');
+        const availableHours = await fetchAvailableHoursForDate(dateStr, token);
+        blockHourTimeSelect.innerHTML = '<option value="">Seleccionar hora...</option>';
+
+        if (!availableHours.length) {
+            const option = document.createElement('option');
+            option.value = '';
+            option.textContent = 'Sin horas habilitadas';
+            blockHourTimeSelect.appendChild(option);
+            return;
+        }
+
+        availableHours.forEach(hour => {
+            const option = document.createElement('option');
+            option.value = hour;
+            option.textContent = hour;
+            blockHourTimeSelect.appendChild(option);
+        });
+    }
 
     // --- Initialization ---
     document.addEventListener('DOMContentLoaded', () => {
@@ -236,15 +358,14 @@
         flatpickr("#block-hour-date", {
             locale: "es",
             minDate: "today",
-            dateFormat: "Y-m-d"
+            dateFormat: "Y-m-d",
+            onChange: async function(selectedDates, dateStr) {
+                populateBlockHourOptions(dateStr);
+            }
         });
 
-        ADMIN_AVAILABLE_HOURS.forEach(hour => {
-            const option = document.createElement('option');
-            option.value = hour;
-            option.textContent = hour;
-            blockHourTimeSelect.appendChild(option);
-        });
+        fetchWeeklySchedule(token);
+        populateBlockHourOptions(blockHourDateInput.value);
     });
 
     // --- Auth Logic ---
@@ -310,7 +431,7 @@
         dashboardSection.classList.remove('hidden');
         if(logoutBtnHeader) logoutBtnHeader.classList.remove('hidden');
 
-        await Promise.all([fetchReservations(token), fetchBlockedDays(token), fetchBlockedHours(token)]);
+        await Promise.all([fetchReservations(token), fetchBlockedDays(token), fetchBlockedHours(token), fetchWeeklySchedule(token)]);
     }
 
     async function fetchReservations(token) {
@@ -506,6 +627,10 @@
     const modal = document.getElementById('confirmation-modal');
     const blockModal = document.getElementById('block-day-modal');
 
+    window.toggleScheduleModal = () => {
+        scheduleModal.classList.toggle('hidden');
+    };
+
     window.confirmDelete = (id) => {
         deleteId = id;
         modal.classList.remove('hidden');
@@ -550,6 +675,46 @@
     window.toggleBlockHourModal = () => {
         blockHourModal.classList.toggle('hidden');
     };
+
+    document.getElementById('schedule-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const dias = {};
+        for (let day = 0; day <= 6; day++) {
+            const key = String(day);
+            const active = document.querySelector(`[data-day="${key}"][data-field="activo"]`).checked;
+            const start = document.querySelector(`[data-day="${key}"][data-field="inicio"]`).value;
+            const end = document.querySelector(`[data-day="${key}"][data-field="fin"]`).value;
+            dias[key] = { activo: active, inicio: start, fin: end };
+        }
+
+        try {
+            const token = localStorage.getItem('access_token');
+            const response = await fetch('/api/reservas/horarios/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({ dias })
+            });
+
+            const data = await response.json();
+            if (response.ok && data.status === 'success') {
+                weeklySchedule = data.dias;
+                renderScheduleTable();
+                toggleScheduleModal();
+                if (blockHourDateInput.value) {
+                    populateBlockHourOptions(blockHourDateInput.value);
+                }
+            } else {
+                alert(data.message || 'Error al guardar horario semanal');
+            }
+        } catch (error) {
+            console.error(error);
+            alert('Error de conexión al guardar el horario semanal');
+        }
+    });
 
     document.getElementById('block-day-form').addEventListener('submit', async (e) => {
         e.preventDefault();
