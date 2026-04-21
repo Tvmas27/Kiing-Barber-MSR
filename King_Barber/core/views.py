@@ -173,13 +173,13 @@ class CrearReservaView(APIView):
                 'telefono': data['telefono'].strip()
             }
 
-            available_hours = get_available_hours_for_date(clean_data['dia'], db)
-            if clean_data['hora'] not in available_hours:
-                return Response({"status": "error", "message": "La hora seleccionada no está disponible."}, status=400)
-
             db = get_firestore_client()
             if db is None:
                 return Response({"status": "error", "message": "Firebase no está configurado en este entorno"}, status=503)
+
+            available_hours = get_available_hours_for_date(clean_data['dia'], db)
+            if clean_data['hora'] not in available_hours:
+                return Response({"status": "error", "message": "La hora seleccionada no está disponible."}, status=400)
             
             # Verificar si el día está bloqueado
             bloqueo_ref = db.collection('dias_bloqueados').document(clean_data['dia'])
@@ -217,15 +217,16 @@ class ObtenerHorasOcupadasView(APIView):
         
         try:
             db = get_firestore_client()
-            available_hours = get_available_hours_for_date(dia, db)
             if db is None:
                 return Response({
                     "status": "success",
                     "dia": dia,
                     "horas_ocupadas": [],
-                    "horas_disponibles": available_hours,
+                    "horas_disponibles": [],
                     "bloqueado": False
                 })
+
+            available_hours = get_available_hours_for_date(dia, db)
             
             # Verificar si el día está bloqueado
             bloqueo_ref = db.collection('dias_bloqueados').document(dia)
