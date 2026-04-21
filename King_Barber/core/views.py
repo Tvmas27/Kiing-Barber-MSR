@@ -6,6 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from firebase_admin import firestore
 import csv
 import datetime
+import unicodedata
 
 AVAILABLE_HOURS = [
     "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00"
@@ -17,6 +18,19 @@ def get_firestore_client():
         return firestore.client()
     except Exception:
         return None
+
+
+def normalize_name(value):
+    value = str(value or '').strip().lower()
+    value = ''.join(
+        char for char in unicodedata.normalize('NFD', value)
+        if unicodedata.category(char) != 'Mn'
+    )
+    return ' '.join(value.split())
+
+
+def normalize_phone(value):
+    return ''.join(char for char in str(value or '') if char.isdigit())
 
 def index(request):
     return render(request, 'core/home.html')
@@ -174,9 +188,13 @@ class CancelarReservaView(APIView):
             db = get_firestore_client()
             if db is None:
                 return Response({"status": "error", "message": "Firebase no está configurado en este entorno"}, status=503)
-            # Buscar la reserva por teléfono, día y hora (datos más exactos)
+
+            input_name = normalize_name(nombre)
+            input_phone = normalize_phone(telefono)
+
+            # Buscar por día y hora, y luego comparar nombre/teléfono normalizados.
+            # Esto evita falsos negativos por espacios, guiones, +56 o tildes.
             reservas = db.collection('reservas')\
-                .where('telefono', '==', telefono)\
                 .where('dia', '==', dia)\
                 .where('hora', '==', hora)\
                 .stream()
@@ -184,11 +202,10 @@ class CancelarReservaView(APIView):
             found = False
             for doc in reservas:
                 doc_data = doc.to_dict()
-                # Verificar nombre (case-insensitive)
-                stored_name = doc_data.get('nombre', '').strip().lower()
-                input_name = nombre.lower()
+                stored_name = normalize_name(doc_data.get('nombre', ''))
+                stored_phone = normalize_phone(doc_data.get('telefono', ''))
 
-                if stored_name == input_name:
+                if stored_name == input_name and stored_phone == input_phone:
                     doc.reference.delete()
                     found = True
             
