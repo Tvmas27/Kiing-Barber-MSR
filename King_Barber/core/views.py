@@ -7,6 +7,10 @@ from firebase_admin import firestore
 import csv
 import datetime
 
+AVAILABLE_HOURS = [
+    "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00"
+]
+
 
 def get_firestore_client():
     try:
@@ -79,6 +83,9 @@ class CrearReservaView(APIView):
                 'telefono': data['telefono'].strip()
             }
 
+            if clean_data['hora'] not in AVAILABLE_HOURS:
+                return Response({"status": "error", "message": "La hora seleccionada no está disponible."}, status=400)
+
             db = get_firestore_client()
             if db is None:
                 return Response({"status": "error", "message": "Firebase no está configurado en este entorno"}, status=503)
@@ -126,14 +133,10 @@ class ObtenerHorasOcupadasView(APIView):
             bloqueo_ref = db.collection('dias_bloqueados').document(dia)
             if bloqueo_ref.get().exists:
                 # Si está bloqueado, devolvemos todas las horas como ocupadas
-                todas_horas = [
-                    "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", 
-                    "17:00", "18:00", "19:00", "20:00", "21:00", "22:00"
-                ]
                 return Response({
                     "status": "success",
                     "dia": dia,
-                    "horas_ocupadas": todas_horas,
+                    "horas_ocupadas": AVAILABLE_HOURS,
                     "bloqueado": True,
                     "mensaje": "Este día no está disponible."
                 })
@@ -307,6 +310,9 @@ class BloquearHoraView(APIView):
 
             if not dia or not hora:
                 return Response({"status": "error", "message": "Faltan día u hora"}, status=400)
+
+            if hora not in AVAILABLE_HOURS:
+                return Response({"status": "error", "message": "La hora indicada está fuera del horario disponible."}, status=400)
 
             db = get_firestore_client()
             if db is None:
