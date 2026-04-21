@@ -721,7 +721,10 @@
         const dia = document.getElementById('block-date').value;
         const motivo = document.getElementById('block-reason').value;
         
-        if (!dia) return;
+        if (!dia) {
+            alert('Selecciona una fecha para bloquear.');
+            return;
+        }
 
         try {
             const token = localStorage.getItem('access_token');
@@ -734,15 +737,23 @@
                 body: JSON.stringify({ dia, motivo })
             });
 
+            const data = await response.json().catch(() => ({}));
+
             if (response.ok) {
                 toggleBlockDayModal();
                 document.getElementById('block-day-form').reset();
                 loadDashboard(token);
             } else {
-                alert('Error al bloquear día');
+                if (response.status === 401) {
+                    alert('Tu sesión expiró. Vuelve a iniciar sesión.');
+                    logout();
+                    return;
+                }
+                alert(data.message || 'Error al bloquear día');
             }
         } catch (error) {
             console.error(error);
+            alert('Error de conexión al bloquear día');
         }
     });
 
@@ -756,11 +767,21 @@
                 headers: { 'Authorization': `Bearer ${token}` }
             });
 
+            const data = await response.json().catch(() => ({}));
+
             if (response.ok) {
                 loadDashboard(token);
+            } else {
+                if (response.status === 401) {
+                    alert('Tu sesión expiró. Vuelve a iniciar sesión.');
+                    logout();
+                    return;
+                }
+                alert(data.message || 'Error al desbloquear día');
             }
         } catch (error) {
             console.error(error);
+            alert('Error de conexión al desbloquear día');
         }
     };
 
