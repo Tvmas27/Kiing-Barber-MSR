@@ -583,7 +583,7 @@
     });
 
     window.unblockDay = async (dia) => {
-        if(!confirm(`¿Desbloquear el día ${dia}?`)) return;
+        if(!confirm(`¿Quieres desbloquear el día ${dia}?`)) return;
         
         try {
             const token = localStorage.getItem('access_token');
@@ -632,7 +632,7 @@
     });
 
     window.unblockHour = async (dia, hora) => {
-        if(!confirm(`¿Desbloquear ${dia} a las ${hora}?`)) return;
+        if(!confirm(`¿Quieres desbloquear la hora ${hora} del día ${dia}?`)) return;
 
         try {
             const token = localStorage.getItem('access_token');
