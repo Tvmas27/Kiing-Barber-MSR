@@ -88,6 +88,11 @@ class CrearReservaView(APIView):
             if bloqueo_ref.get().exists:
                 return Response({"status": "error", "message": "Este día no está disponible para reservas."}, status=400)
 
+            bloqueo_hora_id = f"{clean_data['dia']}_{clean_data['hora'].replace(':', '-') }"
+            bloqueo_hora_ref = db.collection('horas_bloqueadas').document(bloqueo_hora_id)
+            if bloqueo_hora_ref.get().exists:
+                return Response({"status": "error", "message": "Esta hora fue bloqueada por administración."}, status=400)
+
             reservas_ref = db.collection('reservas')
 
             # Verificar disponibilidad
@@ -135,6 +140,10 @@ class ObtenerHorasOcupadasView(APIView):
 
             reservas = db.collection('reservas').where('dia', '==', dia).stream()
             horas_ocupadas = [doc.to_dict().get('hora') for doc in reservas]
+
+            bloqueos_hora = db.collection('horas_bloqueadas').where('dia', '==', dia).stream()
+            horas_bloqueadas = [doc.to_dict().get('hora') for doc in bloqueos_hora if doc.to_dict().get('hora')]
+            horas_ocupadas = list(set(horas_ocupadas + horas_bloqueadas))
             
             return Response({
                 "status": "success",
@@ -283,6 +292,77 @@ class ObtenerDiasBloqueadosView(APIView):
                 bloqueados.append(doc.to_dict())
                 
             return Response({"status": "success", "dias": bloqueados})
+        except Exception as e:
+            return Response({"status": "error", "message": str(e)}, status=500)
+
+
+class BloquearHoraView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            dia = request.data.get('dia')
+            hora = request.data.get('hora')
+            motivo = request.data.get('motivo', 'No disponible')
+
+            if not dia or not hora:
+                return Response({"status": "error", "message": "Faltan día u hora"}, status=400)
+
+            db = get_firestore_client()
+            if db is None:
+                return Response({"status": "error", "message": "Firebase no está configurado en este entorno"}, status=503)
+
+            doc_id = f"{dia}_{hora.replace(':', '-')}"
+            db.collection('horas_bloqueadas').document(doc_id).set({
+                'dia': dia,
+                'hora': hora,
+                'motivo': motivo,
+                'bloqueado_por': request.user.username,
+                'fecha_bloqueo': firestore.SERVER_TIMESTAMP
+            })
+
+            return Response({"status": "success", "message": f"Hora {hora} del día {dia} bloqueada"})
+        except Exception as e:
+            return Response({"status": "error", "message": str(e)}, status=500)
+
+    def delete(self, request):
+        try:
+            dia = request.query_params.get('dia') or request.data.get('dia')
+            hora = request.query_params.get('hora') or request.data.get('hora')
+
+            if not dia or not hora:
+                return Response({"status": "error", "message": "Faltan día u hora"}, status=400)
+
+            db = get_firestore_client()
+            if db is None:
+                return Response({"status": "error", "message": "Firebase no está configurado en este entorno"}, status=503)
+
+            doc_id = f"{dia}_{hora.replace(':', '-')}"
+            db.collection('horas_bloqueadas').document(doc_id).delete()
+
+            return Response({"status": "success", "message": f"Hora {hora} del día {dia} desbloqueada"})
+        except Exception as e:
+            return Response({"status": "error", "message": str(e)}, status=500)
+
+
+class ObtenerHorasBloqueadasView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            db = get_firestore_client()
+            if db is None:
+                return Response({"status": "success", "horas": []})
+
+            dia = request.query_params.get('dia')
+            query = db.collection('horas_bloqueadas')
+            if dia:
+                query = query.where('dia', '==', dia)
+
+            docs = query.stream()
+            horas = [doc.to_dict() for doc in docs]
+
+            return Response({"status": "success", "horas": horas})
         except Exception as e:
             return Response({"status": "error", "message": str(e)}, status=500)
 

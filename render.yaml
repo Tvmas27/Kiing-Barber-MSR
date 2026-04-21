@@ -3,8 +3,8 @@ services:
     name: kiing-barber-msr
     env: python
     plan: free
-    buildCommand: pip install -r requirements.txt && python King_Barber/manage.py collectstatic --noinput && python King_Barber/manage.py migrate --noinput
-    startCommand: gunicorn King_Barber.wsgi:application
+    buildCommand: pip install -r requirements.txt && cd King_Barber && python manage.py collectstatic --noinput && python manage.py migrate --noinput
+    startCommand: cd King_Barber && gunicorn King_Barber.wsgi:application
     autoDeploy: true
     envVars:
       - key: DEBUG

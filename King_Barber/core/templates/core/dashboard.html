@@ -59,6 +59,9 @@
             <button onclick="toggleBlockDayModal()" class="bg-red-900/30 text-red-400 border border-red-900 px-4 py-2 rounded hover:bg-red-900/50 transition-colors flex items-center gap-2 text-sm font-bold">
                 <i class="fas fa-ban"></i> Bloquear Día
             </button>
+            <button onclick="toggleBlockHourModal()" class="bg-orange-900/30 text-orange-300 border border-orange-900 px-4 py-2 rounded hover:bg-orange-900/50 transition-colors flex items-center gap-2 text-sm font-bold">
+                <i class="fas fa-clock"></i> Bloquear Hora
+            </button>
             <button id="export-btn" class="bg-green-900/30 text-green-400 border border-green-900 px-4 py-2 rounded hover:bg-green-900/50 transition-colors flex items-center gap-2 text-sm font-bold">
                 <i class="fas fa-file-csv"></i> Exportar CSV
             </button>
@@ -74,6 +77,15 @@
             <i class="fas fa-exclamation-triangle text-dorado"></i> Días Bloqueados
         </h3>
         <div id="blocked-days-list" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+            <!-- Injected by JS -->
+        </div>
+    </div>
+
+    <div id="blocked-hours-container" class="hidden">
+        <h3 class="text-white text-lg font-bold mb-3 flex items-center gap-2">
+            <i class="fas fa-clock text-dorado"></i> Horas Bloqueadas
+        </h3>
+        <div id="blocked-hours-list" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
             <!-- Injected by JS -->
         </div>
     </div>
@@ -110,6 +122,38 @@
         <div class="md:hidden space-y-4 p-4" id="reservas-mobile-list">
             <!-- Cards injected by JS -->
         </div>
+    </div>
+</div>
+
+<!-- Block Hour Modal -->
+<div id="block-hour-modal" class="fixed inset-0 bg-black/90 hidden flex items-center justify-center z-50 p-4">
+    <div class="bg-gris-oscuro border border-dorado p-6 rounded-lg max-w-sm w-full shadow-2xl relative">
+        <button onclick="toggleBlockHourModal()" class="absolute top-4 right-4 text-gray-400 hover:text-white">
+            <i class="fas fa-times"></i>
+        </button>
+
+        <h3 class="text-xl text-dorado font-bold mb-4">Bloquear Hora</h3>
+        <p class="text-gray-400 text-sm mb-6">Selecciona una fecha y hora para impedir reservas en ese bloque.</p>
+
+        <form id="block-hour-form" class="space-y-4">
+            <div>
+                <label class="block text-white text-sm mb-2">Fecha</label>
+                <input type="text" id="block-hour-date" class="w-full p-3 rounded bg-negro text-white border border-gris-borde focus:border-dorado outline-none" placeholder="Seleccionar fecha...">
+            </div>
+            <div>
+                <label class="block text-white text-sm mb-2">Hora</label>
+                <select id="block-hour-time" class="w-full p-3 rounded bg-negro text-white border border-gris-borde focus:border-dorado outline-none">
+                    <option value="">Seleccionar hora...</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-white text-sm mb-2">Motivo (Opcional)</label>
+                <input type="text" id="block-hour-reason" class="w-full p-3 rounded bg-negro text-white border border-gris-borde focus:border-dorado outline-none" placeholder="Ej: Colación, Limpieza...">
+            </div>
+            <button type="submit" class="w-full bg-orange-600 text-white font-bold py-3 rounded hover:bg-orange-700 transition-colors">
+                CONFIRMAR BLOQUEO DE HORA
+            </button>
+        </form>
     </div>
 </div>
 
@@ -165,9 +209,16 @@
     const loginError = document.getElementById('login-error');
     const logoutBtn = document.getElementById('logout-btn');
     const logoutBtnHeader = document.getElementById('logout-btn-header');
+    const blockHourModal = document.getElementById('block-hour-modal');
+    const blockHourTimeSelect = document.getElementById('block-hour-time');
+    const ADMIN_AVAILABLE_HOURS = [
+        "11:00", "12:00", "13:00", "14:00", "15:00", "16:00",
+        "17:00", "18:00", "19:00", "20:00", "21:00", "22:00"
+    ];
     
     let allReservations = [];
     let blockedDays = [];
+    let blockedHours = [];
 
     // --- Initialization ---
     document.addEventListener('DOMContentLoaded', () => {
@@ -181,6 +232,19 @@
             locale: "es",
             minDate: "today",
             dateFormat: "Y-m-d"
+        });
+
+        flatpickr("#block-hour-date", {
+            locale: "es",
+            minDate: "today",
+            dateFormat: "Y-m-d"
+        });
+
+        ADMIN_AVAILABLE_HOURS.forEach(hour => {
+            const option = document.createElement('option');
+            option.value = hour;
+            option.textContent = hour;
+            blockHourTimeSelect.appendChild(option);
         });
     });
 
@@ -247,7 +311,7 @@
         dashboardSection.classList.remove('hidden');
         if(logoutBtnHeader) logoutBtnHeader.classList.remove('hidden');
 
-        await Promise.all([fetchReservations(token), fetchBlockedDays(token)]);
+        await Promise.all([fetchReservations(token), fetchBlockedDays(token), fetchBlockedHours(token)]);
     }
 
     async function fetchReservations(token) {
@@ -281,6 +345,21 @@
             }
         } catch (error) {
             console.error("Error fetching blocked days:", error);
+        }
+    }
+
+    async function fetchBlockedHours(token) {
+        try {
+            const response = await fetch('/api/reservas/horas-bloqueadas/', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const data = await response.json();
+            if (data.status === 'success') {
+                blockedHours = data.horas;
+                renderBlockedHours();
+            }
+        } catch (error) {
+            console.error("Error fetching blocked hours:", error);
         }
     }
 
@@ -393,6 +472,36 @@
         });
     }
 
+    function renderBlockedHours() {
+        const container = document.getElementById('blocked-hours-container');
+        const list = document.getElementById('blocked-hours-list');
+
+        if (blockedHours.length === 0) {
+            container.classList.add('hidden');
+            return;
+        }
+
+        container.classList.remove('hidden');
+        list.innerHTML = '';
+
+        blockedHours.sort((a, b) => `${a.dia} ${a.hora}`.localeCompare(`${b.dia} ${b.hora}`));
+
+        blockedHours.forEach(item => {
+            const div = document.createElement('div');
+            div.className = 'bg-orange-900/20 border border-orange-900/50 p-3 rounded flex justify-between items-center';
+            div.innerHTML = `
+                <div>
+                    <p class="text-orange-300 font-bold">${item.dia} · ${item.hora}</p>
+                    <p class="text-orange-200/70 text-xs">${item.motivo || 'No disponible'}</p>
+                </div>
+                <button onclick="unblockHour('${item.dia}','${item.hora}')" class="text-gray-400 hover:text-white text-xs bg-black/50 px-2 py-1 rounded">
+                    Desbloquear
+                </button>
+            `;
+            list.appendChild(div);
+        });
+    }
+
     // --- Actions ---
     let deleteId = null;
     const modal = document.getElementById('confirmation-modal');
@@ -439,6 +548,10 @@
         blockModal.classList.toggle('hidden');
     };
 
+    window.toggleBlockHourModal = () => {
+        blockHourModal.classList.toggle('hidden');
+    };
+
     document.getElementById('block-day-form').addEventListener('submit', async (e) => {
         e.preventDefault();
         const dia = document.getElementById('block-date').value;
@@ -475,6 +588,55 @@
         try {
             const token = localStorage.getItem('access_token');
             const response = await fetch(`/api/reservas/bloquear-dia/?dia=${dia}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            if (response.ok) {
+                loadDashboard(token);
+            }
+        } catch (error) {
+            console.error(error);
+        }
+    };
+
+    document.getElementById('block-hour-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const dia = document.getElementById('block-hour-date').value;
+        const hora = document.getElementById('block-hour-time').value;
+        const motivo = document.getElementById('block-hour-reason').value;
+
+        if (!dia || !hora) return;
+
+        try {
+            const token = localStorage.getItem('access_token');
+            const response = await fetch('/api/reservas/bloquear-hora/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({ dia, hora, motivo })
+            });
+
+            if (response.ok) {
+                toggleBlockHourModal();
+                document.getElementById('block-hour-form').reset();
+                loadDashboard(token);
+            } else {
+                alert('Error al bloquear hora');
+            }
+        } catch (error) {
+            console.error(error);
+        }
+    });
+
+    window.unblockHour = async (dia, hora) => {
+        if(!confirm(`¿Desbloquear ${dia} a las ${hora}?`)) return;
+
+        try {
+            const token = localStorage.getItem('access_token');
+            const response = await fetch(`/api/reservas/bloquear-hora/?dia=${dia}&hora=${hora}`, {
                 method: 'DELETE',
                 headers: { 'Authorization': `Bearer ${token}` }
             });
