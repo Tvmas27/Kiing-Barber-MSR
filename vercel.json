@@ -1,5 +1,6 @@
 {
   "version": 2,
+  "buildCommand": "cd King_Barber && python manage.py collectstatic --noinput",
   "builds": [
     {
       "src": "api/index.py",
@@ -7,6 +8,10 @@
     }
   ],
   "routes": [
+    {
+      "src": "/static/(.*)",
+      "dest": "/King_Barber/core/static/$1"
+    },
     {
       "src": "/(.*)",
       "dest": "api/index.py"
