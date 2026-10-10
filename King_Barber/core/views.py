@@ -324,18 +324,21 @@ class HorariosAtencionView(APIView):
     permission_classes = []
 
     def get(self, request):
-        dia = request.query_params.get('dia')
-        db = get_firestore_client()
+        try:
+            dia = request.query_params.get('dia')
+            db = get_firestore_client()
 
-        if dia:
-            return Response({
-                "status": "success",
-                "dia": dia,
-                "horas_disponibles": get_available_hours_for_date(dia, db)
-            })
+            if dia:
+                return Response({
+                    "status": "success",
+                    "dia": dia,
+                    "horas_disponibles": get_available_hours_for_date(dia, db)
+                })
 
-        schedule = get_weekly_schedule(db)
-        return Response({"status": "success", "dias": schedule})
+            schedule = get_weekly_schedule(db)
+            return Response({"status": "success", "dias": schedule})
+        except Exception as exc:
+            return _safe_error('consultar horarios', exc)
 
     def post(self, request):
         if not request.user or not request.user.is_authenticated:
@@ -538,7 +541,7 @@ class ObtenerDiasBloqueadosView(APIView):
                 
             return Response({"status": "success", "dias": bloqueados})
         except Exception as e:
-            return Response({"status": "error", "message": str(e)}, status=500)
+            return _safe_error('consultar días bloqueados', e)
 
 
 class BloquearHoraView(APIView):
