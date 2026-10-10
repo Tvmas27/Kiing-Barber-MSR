@@ -1,5 +1,10 @@
 import os
+import sys
+from pathlib import Path
 
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'King_Barber.King_Barber.settings')
+project_root = Path(__file__).resolve().parent.parent / 'King_Barber'
+sys.path.insert(0, str(project_root))
 
-from King_Barber.King_Barber.wsgi import application
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'King_Barber.settings')
+
+from King_Barber.wsgi import application
