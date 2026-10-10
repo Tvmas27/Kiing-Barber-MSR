@@ -62,6 +62,8 @@ if not DEBUG:
 # Application definition
 
 INSTALLED_APPS = [
+    'django.contrib.auth',
+    'django.contrib.contenttypes',
     'django.contrib.staticfiles',
     'corsheaders',
     'rest_framework',
