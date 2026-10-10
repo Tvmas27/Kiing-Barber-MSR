@@ -130,11 +130,6 @@
     const timeInput = document.getElementById('time');
     const dayInput = document.getElementById('day'); // Hidden input para compatibilidad
     const timeSlotsContainer = document.getElementById('timeSlotsContainer');
-    
-    const availableHours = [
-        "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", 
-        "17:00", "18:00", "19:00", "20:00", "21:00", "22:00"
-    ];
 
     // Inicializar Flatpickr
     flatpickr(dateInput, {
@@ -175,7 +170,7 @@
                             </div>
                         `;
                     } else {
-                        renderTimeSlots(data.horas_ocupadas);
+                        renderTimeSlots(data.horas_ocupadas, data.horas_disponibles || []);
                     }
                 } else {
                     timeSlotsContainer.innerHTML = '<div class="col-span-full text-center text-red-500 py-4">Error al cargar disponibilidad.</div>';
@@ -188,8 +183,13 @@
         }
     });
 
-    function renderTimeSlots(occupiedHours) {
+    function renderTimeSlots(occupiedHours, availableHours) {
         timeSlotsContainer.innerHTML = '';
+
+        if (!availableHours.length) {
+            timeSlotsContainer.innerHTML = '<div class="col-span-full text-center text-gray-400 py-4">Este día no tiene horarios habilitados.</div>';
+            return;
+        }
         
         availableHours.forEach(hour => {
             const isOccupied = occupiedHours.includes(hour);

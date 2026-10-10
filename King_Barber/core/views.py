@@ -55,6 +55,17 @@ def _clean_reservation(data):
 def _safe_error(operation, exc):
     logger.exception('Error en %s: %s', operation, exc)
     return Response({'status': 'error', 'message': 'No se pudo completar la operación'}, status=500)
+import unicodedata
+
+DEFAULT_WEEKLY_SCHEDULE = {
+    "0": {"activo": True, "inicio": "11:00", "fin": "17:00"},  # Domingo
+    "1": {"activo": True, "inicio": "11:00", "fin": "17:00"},  # Lunes
+    "2": {"activo": True, "inicio": "11:00", "fin": "17:00"},  # Martes
+    "3": {"activo": True, "inicio": "11:00", "fin": "17:00"},  # Miercoles
+    "4": {"activo": True, "inicio": "11:00", "fin": "17:00"},  # Jueves
+    "5": {"activo": True, "inicio": "11:00", "fin": "17:00"},  # Viernes
+    "6": {"activo": True, "inicio": "18:00", "fin": "20:00"},  # Sabado
+}
 
 
 def get_firestore_client():
@@ -62,6 +73,89 @@ def get_firestore_client():
         return firestore.client()
     except Exception:
         return None
+
+
+def normalize_name(value):
+    value = str(value or '').strip().lower()
+    value = ''.join(
+        char for char in unicodedata.normalize('NFD', value)
+        if unicodedata.category(char) != 'Mn'
+    )
+    return ' '.join(value.split())
+
+
+def normalize_phone(value):
+    return ''.join(char for char in str(value or '') if char.isdigit())
+
+
+def parse_hour_to_int(time_str):
+    try:
+        hour_str, minute_str = str(time_str).split(':')
+        hour = int(hour_str)
+        minute = int(minute_str)
+        if minute != 0 or hour < 0 or hour > 23:
+            return None
+        return hour
+    except Exception:
+        return None
+
+
+def build_hour_range(start_time, end_time):
+    start_hour = parse_hour_to_int(start_time)
+    end_hour = parse_hour_to_int(end_time)
+    if start_hour is None or end_hour is None or start_hour > end_hour:
+        return []
+    return [f"{hour:02d}:00" for hour in range(start_hour, end_hour + 1)]
+
+
+def get_weekly_schedule(db=None):
+    schedule = {day: config.copy() for day, config in DEFAULT_WEEKLY_SCHEDULE.items()}
+    if db is None:
+        db = get_firestore_client()
+    if db is None:
+        return schedule
+
+    try:
+        doc = db.collection('configuracion').document('horarios_atencion').get()
+        if not doc.exists:
+            return schedule
+
+        data = doc.to_dict() or {}
+        stored_days = data.get('dias', {})
+        for day in schedule.keys():
+            day_cfg = stored_days.get(day)
+            if isinstance(day_cfg, dict):
+                active = bool(day_cfg.get('activo', schedule[day]['activo']))
+                start = str(day_cfg.get('inicio', schedule[day]['inicio']))
+                end = str(day_cfg.get('fin', schedule[day]['fin']))
+                schedule[day] = {
+                    'activo': active,
+                    'inicio': start,
+                    'fin': end,
+                }
+    except Exception:
+        return schedule
+
+    return schedule
+
+
+def get_available_hours_for_date(date_str, db=None):
+    try:
+        parsed_date = datetime.datetime.strptime(date_str, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        # Fallback a horario de lunes si la fecha es invalida
+        fallback = DEFAULT_WEEKLY_SCHEDULE["1"]
+        return build_hour_range(fallback['inicio'], fallback['fin'])
+
+    schedule = get_weekly_schedule(db)
+    # Convertimos Python weekday (lunes=0...domingo=6) a JS day (domingo=0...sabado=6)
+    js_day_index = str((parsed_date.weekday() + 1) % 7)
+    day_cfg = schedule.get(js_day_index, DEFAULT_WEEKLY_SCHEDULE[js_day_index])
+
+    if not day_cfg.get('activo', True):
+        return []
+
+    return build_hour_range(day_cfg.get('inicio'), day_cfg.get('fin'))
 
 def index(request):
     return render(request, 'core/home.html')
@@ -118,11 +212,20 @@ class CrearReservaView(APIView):
             db = get_firestore_client()
             if db is None:
                 return Response({"status": "error", "message": "Firebase no está configurado en este entorno"}, status=503)
+
+            available_hours = get_available_hours_for_date(clean_data['dia'], db)
+            if clean_data['hora'] not in available_hours:
+                return Response({"status": "error", "message": "La hora seleccionada no está disponible."}, status=400)
             
             # Verificar si el día está bloqueado
             bloqueo_ref = db.collection('dias_bloqueados').document(clean_data['dia'])
             if bloqueo_ref.get().exists:
                 return Response({"status": "error", "message": "Este día no está disponible para reservas."}, status=400)
+
+            bloqueo_hora_id = f"{clean_data['dia']}_{clean_data['hora'].replace(':', '-') }"
+            bloqueo_hora_ref = db.collection('horas_bloqueadas').document(bloqueo_hora_id)
+            if bloqueo_hora_ref.get().exists:
+                return Response({"status": "error", "message": "Esta hora fue bloqueada por administración."}, status=400)
 
             reservas_ref = db.collection('reservas')
 
@@ -153,35 +256,105 @@ class ObtenerHorasOcupadasView(APIView):
         try:
             db = get_firestore_client()
             if db is None:
-                return Response({"status": "success", "dia": dia, "horas_ocupadas": [], "bloqueado": False})
+                return Response({
+                    "status": "success",
+                    "dia": dia,
+                    "horas_ocupadas": [],
+                    "horas_disponibles": [],
+                    "bloqueado": False
+                })
+
+            available_hours = get_available_hours_for_date(dia, db)
             
             # Verificar si el día está bloqueado
             bloqueo_ref = db.collection('dias_bloqueados').document(dia)
             if bloqueo_ref.get().exists:
                 # Si está bloqueado, devolvemos todas las horas como ocupadas
-                todas_horas = [
-                    "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", 
-                    "17:00", "18:00", "19:00", "20:00", "21:00", "22:00"
-                ]
                 return Response({
                     "status": "success",
                     "dia": dia,
-                    "horas_ocupadas": todas_horas,
+                    "horas_ocupadas": available_hours,
+                    "horas_disponibles": available_hours,
                     "bloqueado": True,
                     "mensaje": "Este día no está disponible."
                 })
 
             reservas = db.collection('reservas').where('dia', '==', dia).stream()
             horas_ocupadas = [doc.to_dict().get('hora') for doc in reservas]
+
+            bloqueos_hora = db.collection('horas_bloqueadas').where('dia', '==', dia).stream()
+            horas_bloqueadas = [doc.to_dict().get('hora') for doc in bloqueos_hora if doc.to_dict().get('hora')]
+            horas_ocupadas = list(set(horas_ocupadas + horas_bloqueadas))
             
             return Response({
                 "status": "success",
                 "dia": dia,
                 "horas_ocupadas": horas_ocupadas,
+                "horas_disponibles": available_hours,
                 "bloqueado": False
             })
         except Exception as e:
             return _safe_error('consultar disponibilidad', e)
+
+
+class HorariosAtencionView(APIView):
+    permission_classes = []
+
+    def get(self, request):
+        dia = request.query_params.get('dia')
+        db = get_firestore_client()
+
+        if dia:
+            return Response({
+                "status": "success",
+                "dia": dia,
+                "horas_disponibles": get_available_hours_for_date(dia, db)
+            })
+
+        schedule = get_weekly_schedule(db)
+        return Response({"status": "success", "dias": schedule})
+
+    def post(self, request):
+        if not request.user or not request.user.is_authenticated:
+            return Response({"status": "error", "message": "No autorizado"}, status=401)
+
+        input_days = request.data.get('dias')
+        if not isinstance(input_days, dict):
+            return Response({"status": "error", "message": "Formato inválido para horarios"}, status=400)
+
+        sanitized = {}
+        for day in ["0", "1", "2", "3", "4", "5", "6"]:
+            cfg = input_days.get(day, DEFAULT_WEEKLY_SCHEDULE[day])
+            if not isinstance(cfg, dict):
+                cfg = DEFAULT_WEEKLY_SCHEDULE[day]
+
+            active = bool(cfg.get('activo', True))
+            start = str(cfg.get('inicio', DEFAULT_WEEKLY_SCHEDULE[day]['inicio']))
+            end = str(cfg.get('fin', DEFAULT_WEEKLY_SCHEDULE[day]['fin']))
+
+            if active and not build_hour_range(start, end):
+                return Response({
+                    "status": "error",
+                    "message": f"Rango horario invalido para el dia {day}."
+                }, status=400)
+
+            sanitized[day] = {
+                'activo': active,
+                'inicio': start,
+                'fin': end,
+            }
+
+        db = get_firestore_client()
+        if db is None:
+            return Response({"status": "error", "message": "Firebase no está configurado en este entorno"}, status=503)
+
+        db.collection('configuracion').document('horarios_atencion').set({
+            'dias': sanitized,
+            'actualizado_por': request.user.username,
+            'actualizado_en': firestore.SERVER_TIMESTAMP,
+        }, merge=True)
+
+        return Response({"status": "success", "dias": sanitized})
 
 class CancelarReservaView(APIView):
     permission_classes = []
@@ -209,9 +382,13 @@ class CancelarReservaView(APIView):
             db = get_firestore_client()
             if db is None:
                 return Response({"status": "error", "message": "Firebase no está configurado en este entorno"}, status=503)
-            # Buscar la reserva por teléfono, día y hora (datos más exactos)
+
+            input_name = normalize_name(nombre)
+            input_phone = normalize_phone(telefono)
+
+            # Buscar por día y hora, y luego comparar nombre/teléfono normalizados.
+            # Esto evita falsos negativos por espacios, guiones, +56 o tildes.
             reservas = db.collection('reservas')\
-                .where('telefono', '==', telefono)\
                 .where('dia', '==', dia)\
                 .where('hora', '==', hora)\
                 .stream()
@@ -219,11 +396,10 @@ class CancelarReservaView(APIView):
             found = False
             for doc in reservas:
                 doc_data = doc.to_dict()
-                # Verificar nombre (case-insensitive)
-                stored_name = doc_data.get('nombre', '').strip().lower()
-                input_name = nombre.lower()
+                stored_name = normalize_name(doc_data.get('nombre', ''))
+                stored_phone = normalize_phone(doc_data.get('telefono', ''))
 
-                if stored_name == input_name:
+                if stored_name == input_name and stored_phone == input_phone:
                     doc.reference.delete()
                     found = True
             
@@ -338,5 +514,80 @@ class ObtenerDiasBloqueadosView(APIView):
                 bloqueados.append(doc.to_dict())
                 
             return Response({"status": "success", "dias": bloqueados})
+        except Exception as e:
+            return Response({"status": "error", "message": str(e)}, status=500)
+
+
+class BloquearHoraView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            dia = request.data.get('dia')
+            hora = request.data.get('hora')
+            motivo = request.data.get('motivo', 'No disponible')
+
+            if not dia or not hora:
+                return Response({"status": "error", "message": "Faltan día u hora"}, status=400)
+
+            db = get_firestore_client()
+            if db is None:
+                return Response({"status": "error", "message": "Firebase no está configurado en este entorno"}, status=503)
+
+            available_hours = get_available_hours_for_date(dia, db)
+            if hora not in available_hours:
+                return Response({"status": "error", "message": "La hora indicada está fuera del horario disponible."}, status=400)
+
+            doc_id = f"{dia}_{hora.replace(':', '-')}"
+            db.collection('horas_bloqueadas').document(doc_id).set({
+                'dia': dia,
+                'hora': hora,
+                'motivo': motivo,
+                'bloqueado_por': request.user.username,
+                'fecha_bloqueo': firestore.SERVER_TIMESTAMP
+            })
+
+            return Response({"status": "success", "message": f"Hora {hora} del día {dia} bloqueada"})
+        except Exception as e:
+            return Response({"status": "error", "message": str(e)}, status=500)
+
+    def delete(self, request):
+        try:
+            dia = request.query_params.get('dia') or request.data.get('dia')
+            hora = request.query_params.get('hora') or request.data.get('hora')
+
+            if not dia or not hora:
+                return Response({"status": "error", "message": "Faltan día u hora"}, status=400)
+
+            db = get_firestore_client()
+            if db is None:
+                return Response({"status": "error", "message": "Firebase no está configurado en este entorno"}, status=503)
+
+            doc_id = f"{dia}_{hora.replace(':', '-')}"
+            db.collection('horas_bloqueadas').document(doc_id).delete()
+
+            return Response({"status": "success", "message": f"Hora {hora} del día {dia} desbloqueada"})
+        except Exception as e:
+            return Response({"status": "error", "message": str(e)}, status=500)
+
+
+class ObtenerHorasBloqueadasView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            db = get_firestore_client()
+            if db is None:
+                return Response({"status": "success", "horas": []})
+
+            dia = request.query_params.get('dia')
+            query = db.collection('horas_bloqueadas')
+            if dia:
+                query = query.where('dia', '==', dia)
+
+            docs = query.stream()
+            horas = [doc.to_dict() for doc in docs]
+
+            return Response({"status": "success", "horas": horas})
         except Exception as e:
             return Response({"status": "error", "message": str(e)}, status=500)
