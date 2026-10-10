@@ -1,10 +1,5 @@
 from django.urls import path
 from . import views
-from rest_framework_simplejwt.views import (
-    TokenObtainPairView,
-    TokenRefreshView,
-)
-
 urlpatterns = [
     path('', views.index, name='index'),
     path('dashboard/', views.dashboard_view, name='dashboard'),
@@ -18,7 +13,4 @@ urlpatterns = [
     path('api/reservas/bloquear-dia/', views.BloquearDiaView.as_view(), name='api_bloquear_dia'),
     path('api/reservas/dias-bloqueados/', views.ObtenerDiasBloqueadosView.as_view(), name='api_dias_bloqueados'),
     path('api/reservas/<str:doc_id>/', views.ReservaDetailView.as_view(), name='api_reserva_detail'),
-    # path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'), # Reemplazado
-    path('api/token/', views.CustomLoginView.as_view(), name='custom_login'),
-    path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
 ]

@@ -2,6 +2,8 @@
 {% load static %}
 
 {% block content %}
+{{ firebase_config|json_script:"firebase-config" }}
+
 <!-- Login Section -->
 <div id="login-section" class="max-w-md mx-auto mt-10 bg-gris-oscuro p-8 rounded-lg border border-dorado shadow-2xl">
     <div class="text-center mb-8">
@@ -14,12 +16,12 @@
     
     <form id="login-form" class="space-y-6">
         <div>
-            <label class="block text-dorado text-sm font-bold mb-2">Usuario</label>
+            <label class="block text-dorado text-sm font-bold mb-2">Correo electrónico</label>
             <div class="relative">
                 <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-500">
                     <i class="fas fa-user"></i>
                 </span>
-                <input type="text" id="username" class="w-full pl-10 p-3 rounded bg-negro text-white border border-gris-borde focus:border-dorado outline-none transition-colors" placeholder="admin">
+                <input type="email" id="username" autocomplete="username" class="w-full pl-10 p-3 rounded bg-negro text-white border border-gris-borde focus:border-dorado outline-none transition-colors" placeholder="admin@dominio.com" required>
             </div>
         </div>
         <div>
@@ -28,7 +30,7 @@
                 <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-500">
                     <i class="fas fa-lock"></i>
                 </span>
-                <input type="password" id="password" class="w-full pl-10 p-3 rounded bg-negro text-white border border-gris-borde focus:border-dorado outline-none transition-colors" placeholder="••••••••">
+                <input type="password" id="password" autocomplete="current-password" class="w-full pl-10 p-3 rounded bg-negro text-white border border-gris-borde focus:border-dorado outline-none transition-colors" placeholder="••••••••" required>
             </div>
         </div>
         <button type="submit" class="w-full bg-dorado text-negro font-bold py-3 rounded hover:bg-dorado-oscuro transition-all transform hover:scale-[1.02] shadow-lg">
@@ -157,7 +159,14 @@
 {% endblock %}
 
 {% block extra_js %}
-<script>
+<script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js';
+    import { getAuth, signInWithEmailAndPassword, signOut } from 'https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js';
+
+    const firebaseConfig = JSON.parse(document.getElementById('firebase-config').textContent);
+    const firebaseApp = initializeApp(firebaseConfig);
+    const firebaseAuth = getAuth(firebaseApp);
+
     // --- State & Elements ---
     const loginForm = document.getElementById('login-form');
     const loginSection = document.getElementById('login-section');
@@ -169,13 +178,10 @@
     let allReservations = [];
     let blockedDays = [];
 
+    let accessToken = null;
+
     // --- Initialization ---
     document.addEventListener('DOMContentLoaded', () => {
-        const token = localStorage.getItem('access_token');
-        if (token) {
-            loadDashboard(token);
-        }
-
         // Init Flatpickr for blocking
         flatpickr("#block-date", {
             locale: "es",
@@ -195,31 +201,12 @@
         btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
 
         try {
-            const response = await fetch('/api/token/', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, password })
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                localStorage.setItem('access_token', data.access);
-                localStorage.setItem('refresh_token', data.refresh);
-                loadDashboard(data.access);
-            } else {
-                // Intentar leer error como JSON
-                try {
-                    const errData = await response.json();
-                    console.error('Login error data:', errData);
-                    showLoginError(errData.detail || 'Credenciales incorrectas');
-                } catch (e) {
-                    console.error('Login error status:', response.status);
-                    showLoginError(`Error del servidor (${response.status}). Revisa la consola.`);
-                }
-            }
+            const credential = await signInWithEmailAndPassword(firebaseAuth, username, password);
+            accessToken = await credential.user.getIdToken();
+            await loadDashboard(accessToken);
         } catch (error) {
-            console.error('Network error:', error);
-            showLoginError('Error de conexión: ' + error.message);
+            console.error('Firebase login error:', error.code);
+            showLoginError('Correo o contraseña incorrectos.');
         } finally {
             btn.disabled = false;
             btn.innerText = 'INGRESAR';
@@ -233,8 +220,8 @@
     }
 
     function logout() {
-        localStorage.removeItem('access_token');
-        localStorage.removeItem('refresh_token');
+        accessToken = null;
+        signOut(firebaseAuth).catch(() => {});
         location.reload();
     }
 
@@ -299,20 +286,24 @@
             return dateA - dateB; // Ascending (upcoming first)
         });
 
+        const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        })[character]);
+
         reservas.forEach(res => {
             const whatsappLink = `https://wa.me/${res.telefono.replace(/\D/g,'')}`;
-            const telLink = `tel:${res.telefono}`;
+            const telLink = `tel:${encodeURIComponent(res.telefono)}`;
             
             // Desktop Row
             const tr = document.createElement('tr');
             tr.className = 'hover:bg-white/5 transition-colors group';
             tr.innerHTML = `
-                <td class="p-4 font-bold text-white">${res.nombre}</td>
-                <td class="p-4 text-gray-400">${res.servicio}</td>
+                <td class="p-4 font-bold text-white">${escapeHtml(res.nombre)}</td>
+                <td class="p-4 text-gray-400">${escapeHtml(res.servicio)}</td>
                 <td class="p-4">
                     <div class="flex flex-col">
-                        <span class="text-dorado font-bold">${res.dia}</span>
-                        <span class="text-xs text-gray-500">${res.hora}</span>
+                        <span class="text-dorado font-bold">${escapeHtml(res.dia)}</span>
+                        <span class="text-xs text-gray-500">${escapeHtml(res.hora)}</span>
                     </div>
                 </td>
                 <td class="p-4">
@@ -339,12 +330,12 @@
             card.innerHTML = `
                 <div class="flex justify-between items-start">
                     <div>
-                        <h4 class="text-white font-bold text-lg">${res.nombre}</h4>
-                        <p class="text-dorado text-sm">${res.servicio}</p>
+                        <h4 class="text-white font-bold text-lg">${escapeHtml(res.nombre)}</h4>
+                        <p class="text-dorado text-sm">${escapeHtml(res.servicio)}</p>
                     </div>
                     <div class="text-right">
-                        <p class="text-white font-bold">${res.dia}</p>
-                        <p class="text-gray-400 text-sm">${res.hora}</p>
+                        <p class="text-white font-bold">${escapeHtml(res.dia)}</p>
+                        <p class="text-gray-400 text-sm">${escapeHtml(res.hora)}</p>
                     </div>
                 </div>
                 <div class="flex justify-between items-center pt-3 border-t border-gray-800 mt-1">
@@ -382,8 +373,8 @@
             div.className = 'bg-red-900/20 border border-red-900/50 p-3 rounded flex justify-between items-center';
             div.innerHTML = `
                 <div>
-                    <p class="text-red-400 font-bold">${day.dia}</p>
-                    <p class="text-red-300/70 text-xs">${day.motivo}</p>
+                        <p class="text-red-400 font-bold">${escapeHtml(day.dia)}</p>
+                        <p class="text-red-300/70 text-xs">${escapeHtml(day.motivo)}</p>
                 </div>
                 <button onclick="unblockDay('${day.dia}')" class="text-gray-400 hover:text-white text-xs bg-black/50 px-2 py-1 rounded">
                     Desbloquear
@@ -415,7 +406,7 @@
         btn.innerText = '...';
         
         try {
-            const token = localStorage.getItem('access_token');
+            const token = accessToken;
             const response = await fetch(`/api/reservas/${deleteId}/`, {
                 method: 'DELETE',
                 headers: { 'Authorization': `Bearer ${token}` }
@@ -447,7 +438,7 @@
         if (!dia) return;
 
         try {
-            const token = localStorage.getItem('access_token');
+            const token = accessToken;
             const response = await fetch('/api/reservas/bloquear-dia/', {
                 method: 'POST',
                 headers: { 
@@ -473,7 +464,7 @@
         if(!confirm(`¿Desbloquear el día ${dia}?`)) return;
         
         try {
-            const token = localStorage.getItem('access_token');
+            const token = accessToken;
             const response = await fetch(`/api/reservas/bloquear-dia/?dia=${dia}`, {
                 method: 'DELETE',
                 headers: { 'Authorization': `Bearer ${token}` }
@@ -499,7 +490,7 @@
 
     // Export CSV
     document.getElementById('export-btn').addEventListener('click', async () => {
-        const token = localStorage.getItem('access_token');
+        const token = accessToken;
         try {
             const response = await fetch('/api/reservas/exportar/', {
                 headers: { 'Authorization': `Bearer ${token}` }

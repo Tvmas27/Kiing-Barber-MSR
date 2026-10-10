@@ -12,7 +12,6 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 from pathlib import Path
 import os
-import dj_database_url
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -29,52 +28,48 @@ def env_list(name, default=''):
     return [item.strip() for item in os.getenv(name, default).split(',') if item.strip()]
 
 
+def vercel_origin(name):
+    host = os.getenv(name)
+    return f'https://{host}' if host else ''
+
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-if env_bool('DEBUG', True):
-    SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-26i9ta$kcj$8s_r7y=*-w=z(ozw*6&y3j*ru&678&$tvpbyqj!')
+DEBUG = env_bool('DEBUG', False)
+
+if DEBUG:
+    SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-local-only-change-me')
 else:
     SECRET_KEY = os.getenv('SECRET_KEY')
     if not SECRET_KEY:
         raise RuntimeError('SECRET_KEY must be set when DEBUG=False')
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = env_bool('DEBUG', True)
-
 ALLOWED_HOSTS = env_list('ALLOWED_HOSTS', '127.0.0.1,localhost')
 
 if not DEBUG:
-    render_host = os.getenv('RENDER_EXTERNAL_HOSTNAME')
-    if render_host and render_host not in ALLOWED_HOSTS:
-        ALLOWED_HOSTS.append(render_host)
+    for vercel_host in ('VERCEL_URL', 'VERCEL_PROJECT_PRODUCTION_URL'):
+        host = os.getenv(vercel_host)
+        if host and host not in ALLOWED_HOSTS:
+            ALLOWED_HOSTS.append(host)
 
 
 # Application definition
 
 INSTALLED_APPS = [
-    'django.contrib.admin',
-    'django.contrib.auth',
-    'django.contrib.contenttypes',
-    'django.contrib.sessions',
-    'django.contrib.messages',
     'django.contrib.staticfiles',
     'corsheaders',
     'rest_framework',
-    'rest_framework_simplejwt',
     'core',
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
-    'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
-    'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
@@ -88,44 +83,12 @@ TEMPLATES = [
         'OPTIONS': {
             'context_processors': [
                 'django.template.context_processors.request',
-                'django.contrib.auth.context_processors.auth',
-                'django.contrib.messages.context_processors.messages',
             ],
         },
     },
 ]
 
 WSGI_APPLICATION = 'King_Barber.wsgi.application'
-
-
-# Database
-# https://docs.djangoproject.com/en/5.2/ref/settings/#databases
-
-DATABASES = {
-    'default': dj_database_url.config(
-        default='sqlite:///' + str(BASE_DIR / 'db.sqlite3'),
-        conn_max_age=600
-    )
-}
-
-
-# Password validation
-# https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
-
-AUTH_PASSWORD_VALIDATORS = [
-    {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
-    },
-]
 
 
 # Internationalization
@@ -154,8 +117,25 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'core.authentication.FirebaseAuthentication',
     ),
+    'DEFAULT_THROTTLE_CLASSES': (
+        'rest_framework.throttling.AnonRateThrottle',
+    ),
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '120/minute',
+        'booking': '10/hour',
+        'cancellation': '10/hour',
+    },
+}
+
+FIREBASE_WEB_CONFIG = {
+    'apiKey': os.getenv('FIREBASE_API_KEY', ''),
+    'authDomain': os.getenv('FIREBASE_AUTH_DOMAIN', ''),
+    'projectId': os.getenv('FIREBASE_PROJECT_ID', ''),
+    'storageBucket': os.getenv('FIREBASE_STORAGE_BUCKET', ''),
+    'messagingSenderId': os.getenv('FIREBASE_MESSAGING_SENDER_ID', ''),
+    'appId': os.getenv('FIREBASE_APP_ID', ''),
 }
 
 # CORS Configuration
@@ -166,9 +146,16 @@ CORS_ALLOW_ALL_ORIGINS = DEBUG
 
 if not DEBUG:
     # Obtener variables y filtrar cadenas vacías
-    CORS_ALLOWED_ORIGINS = env_list('CORS_ALLOWED_ORIGINS')
-    
-    CSRF_TRUSTED_ORIGINS = env_list('CSRF_TRUSTED_ORIGINS')
+    vercel_origins = [
+        vercel_origin('VERCEL_URL'),
+        vercel_origin('VERCEL_PROJECT_PRODUCTION_URL'),
+    ]
+    CORS_ALLOWED_ORIGINS = env_list('CORS_ALLOWED_ORIGINS') + [
+        origin for origin in vercel_origins if origin
+    ]
+    CSRF_TRUSTED_ORIGINS = env_list('CSRF_TRUSTED_ORIGINS') + [
+        origin for origin in vercel_origins if origin
+    ]
     
     # Seguridad adicional para producción
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
@@ -180,3 +167,5 @@ if not DEBUG:
     CSRF_COOKIE_SECURE = True
     SECURE_BROWSER_XSS_FILTER = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_REFERRER_POLICY = 'same-origin'
+    SECURE_CROSS_ORIGIN_OPENER_POLICY = 'same-origin'

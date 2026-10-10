@@ -1,0 +1,9 @@
+{
+  "buildCommand": "cd King_Barber && python manage.py collectstatic --noinput",
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/api/index.py"
+    }
+  ]
+}

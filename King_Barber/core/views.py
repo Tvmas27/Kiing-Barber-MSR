@@ -1,11 +1,60 @@
+from django.conf import settings
 from django.shortcuts import render
 from django.http import HttpResponse
+from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.throttling import AnonRateThrottle
 from firebase_admin import firestore
+from google.api_core.exceptions import AlreadyExists
 import csv
 import datetime
+import logging
+import re
+
+
+logger = logging.getLogger(__name__)
+AVAILABLE_SERVICES = frozenset({'corte', 'barba', 'cejas', 'visos', 'permanente', 'combo'})
+AVAILABLE_HOURS = frozenset(f'{hour:02d}:00' for hour in range(11, 23))
+PHONE_PATTERN = re.compile(r'^[0-9+() .-]{7,20}$')
+
+
+class BookingThrottle(AnonRateThrottle):
+    scope = 'booking'
+
+
+class CancellationThrottle(AnonRateThrottle):
+    scope = 'cancellation'
+
+
+def _clean_reservation(data):
+    required_fields = ('nombre', 'servicio', 'dia', 'hora', 'telefono')
+    if any(not isinstance(data.get(field), str) for field in required_fields):
+        raise ValueError('Los datos de la reserva no son válidos')
+
+    clean_data = {field: data[field].strip() for field in required_fields}
+    if not 2 <= len(clean_data['nombre']) <= 100:
+        raise ValueError('El nombre no es válido')
+    if clean_data['servicio'] not in AVAILABLE_SERVICES:
+        raise ValueError('El servicio no es válido')
+    if clean_data['hora'] not in AVAILABLE_HOURS:
+        raise ValueError('La hora no es válida')
+    if not PHONE_PATTERN.fullmatch(clean_data['telefono']):
+        raise ValueError('El teléfono no es válido')
+
+    try:
+        reservation_date = datetime.date.fromisoformat(clean_data['dia'])
+    except ValueError as exc:
+        raise ValueError('La fecha no es válida') from exc
+    if reservation_date < timezone.localdate():
+        raise ValueError('La fecha debe ser futura')
+    return clean_data
+
+
+def _safe_error(operation, exc):
+    logger.exception('Error en %s: %s', operation, exc)
+    return Response({'status': 'error', 'message': 'No se pudo completar la operación'}, status=500)
 
 
 def get_firestore_client():
@@ -60,24 +109,11 @@ class ReservaDetailView(APIView):
 
 class CrearReservaView(APIView):
     permission_classes = [] # Público
+    throttle_classes = [BookingThrottle]
 
     def post(self, request):
         try:
-            data = request.data
-            # Validación básica
-            required_fields = ['nombre', 'servicio', 'dia', 'hora', 'telefono']
-            for field in required_fields:
-                if field not in data:
-                    return Response({"status": "error", "message": f"Falta el campo {field}"}, status=400)
-            
-            # Limpiar datos (strip whitespace)
-            clean_data = {
-                'nombre': data['nombre'].strip(),
-                'servicio': data['servicio'],
-                'dia': data['dia'],
-                'hora': data['hora'],
-                'telefono': data['telefono'].strip()
-            }
+            clean_data = _clean_reservation(request.data)
 
             db = get_firestore_client()
             if db is None:
@@ -90,19 +126,17 @@ class CrearReservaView(APIView):
 
             reservas_ref = db.collection('reservas')
 
-            # Verificar disponibilidad
-            query = reservas_ref.where('dia', '==', clean_data['dia']).where('hora', '==', clean_data['hora']).stream()
-            if any(query):
-                return Response({"status": "error", "message": "Horario no disponible"}, status=400)
-
-            # Agregar timestamp
             clean_data['creadoEn'] = firestore.SERVER_TIMESTAMP
-
-            reservas_ref.add(clean_data)
+            reservation_id = f"{clean_data['dia']}_{clean_data['hora'].replace(':', '-')}"
+            reservas_ref.document(reservation_id).create(clean_data)
             
             return Response({"status": "success", "message": "Reserva creada exitosamente"})
+        except ValueError as e:
+            return Response({'status': 'error', 'message': str(e)}, status=400)
+        except AlreadyExists:
+            return Response({'status': 'error', 'message': 'Horario no disponible'}, status=400)
         except Exception as e:
-            return Response({"status": "error", "message": str(e)}, status=500)
+            return _safe_error('crear reserva', e)
 
 class ObtenerHorasOcupadasView(APIView):
     permission_classes = []
@@ -111,6 +145,10 @@ class ObtenerHorasOcupadasView(APIView):
         dia = request.query_params.get('dia')
         if not dia:
             return Response({"status": "error", "message": "Falta el parámetro 'dia'"}, status=400)
+        try:
+            datetime.date.fromisoformat(dia)
+        except ValueError:
+            return Response({'status': 'error', 'message': 'La fecha no es válida'}, status=400)
         
         try:
             db = get_firestore_client()
@@ -143,21 +181,30 @@ class ObtenerHorasOcupadasView(APIView):
                 "bloqueado": False
             })
         except Exception as e:
-            return Response({"status": "error", "message": str(e)}, status=500)
+            return _safe_error('consultar disponibilidad', e)
 
 class CancelarReservaView(APIView):
     permission_classes = []
+    throttle_classes = [CancellationThrottle]
 
     def post(self, request):
         try:
             data = request.data
-            nombre = data.get('nombre', '').strip()
-            telefono = data.get('telefono', '').strip()
+            nombre = data.get('nombre', '').strip() if isinstance(data.get('nombre'), str) else ''
+            telefono = data.get('telefono', '').strip() if isinstance(data.get('telefono'), str) else ''
             dia = data.get('dia')
             hora = data.get('hora')
 
             if not all([nombre, telefono, dia, hora]):
                 return Response({"status": "error", "message": "Faltan datos para cancelar"}, status=400)
+            if len(nombre) > 100 or not PHONE_PATTERN.fullmatch(telefono):
+                return Response({'status': 'error', 'message': 'Los datos no son válidos'}, status=400)
+            try:
+                datetime.date.fromisoformat(dia)
+            except (TypeError, ValueError):
+                return Response({'status': 'error', 'message': 'La fecha no es válida'}, status=400)
+            if hora not in AVAILABLE_HOURS:
+                return Response({'status': 'error', 'message': 'La hora no es válida'}, status=400)
 
             db = get_firestore_client()
             if db is None:
@@ -186,7 +233,7 @@ class CancelarReservaView(APIView):
                 return Response({"status": "error", "message": "No encontramos una reserva con esos datos. Verifica que el nombre y teléfono sean correctos."}, status=404)
 
         except Exception as e:
-            return Response({"status": "error", "message": str(e)}, status=500)
+            return _safe_error('cancelar reserva', e)
 
 class ExportarReservasView(APIView):
     permission_classes = [IsAuthenticated]
@@ -225,7 +272,9 @@ class ExportarReservasView(APIView):
 
 
 def dashboard_view(request):
-    return render(request, 'core/dashboard.html')
+    return render(request, 'core/dashboard.html', {
+        'firebase_config': settings.FIREBASE_WEB_CONFIG,
+    })
 
 class BloquearDiaView(APIView):
     permission_classes = [IsAuthenticated]
@@ -235,22 +284,28 @@ class BloquearDiaView(APIView):
             dia = request.data.get('dia')
             motivo = request.data.get('motivo', 'Fuerza mayor')
             
-            if not dia:
-                return Response({"status": "error", "message": "Falta el día"}, status=400)
+            if not isinstance(dia, str) or not isinstance(motivo, str) or not dia:
+                return Response({'status': 'error', 'message': 'Los datos no son válidos'}, status=400)
+            try:
+                datetime.date.fromisoformat(dia)
+            except ValueError:
+                return Response({'status': 'error', 'message': 'La fecha no es válida'}, status=400)
+            if len(motivo.strip()) > 200:
+                return Response({'status': 'error', 'message': 'El motivo es demasiado largo'}, status=400)
                 
             db = get_firestore_client()
             if db is None:
                 return Response({"status": "error", "message": "Firebase no está configurado en este entorno"}, status=503)
             db.collection('dias_bloqueados').document(dia).set({
                 'dia': dia,
-                'motivo': motivo,
+                'motivo': motivo.strip() or 'Fuerza mayor',
                 'bloqueado_por': request.user.username,
                 'fecha_bloqueo': firestore.SERVER_TIMESTAMP
             })
             
             return Response({"status": "success", "message": f"Día {dia} bloqueado correctamente"})
         except Exception as e:
-            return Response({"status": "error", "message": str(e)}, status=500)
+            return _safe_error('bloquear día', e)
 
     def delete(self, request):
         try:
@@ -266,7 +321,7 @@ class BloquearDiaView(APIView):
             
             return Response({"status": "success", "message": f"Día {dia} desbloqueado"})
         except Exception as e:
-            return Response({"status": "error", "message": str(e)}, status=500)
+            return _safe_error('desbloquear día', e)
 
 class ObtenerDiasBloqueadosView(APIView):
     permission_classes = []
@@ -285,46 +340,3 @@ class ObtenerDiasBloqueadosView(APIView):
             return Response({"status": "success", "dias": bloqueados})
         except Exception as e:
             return Response({"status": "error", "message": str(e)}, status=500)
-
-import os
-from rest_framework_simplejwt.tokens import RefreshToken
-from django.contrib.auth.models import User
-
-class CustomLoginView(APIView):
-    def post(self, request):
-        username = request.data.get('username')
-        password = request.data.get('password')
-        
-        admin_user = os.getenv('ADMIN_USER')
-        admin_pass = os.getenv('ADMIN_PASS')
-
-        if not admin_user or not admin_pass:
-            return Response({"detail": "Dashboard credentials are not configured"}, status=503)
-
-        if username == admin_user and password == admin_pass:
-            # Crear o recuperar un usuario "dummy" en Django para generar el token
-            # Esto es necesario porque SimpleJWT necesita un objeto User
-            try:
-                user, created = User.objects.get_or_create(username=username)
-                if created:
-                    user.set_unusable_password()
-                    user.save()
-            except Exception:
-                # Si falla la DB, usamos un token manual o simulado
-                # Pero para mantener compatibilidad con el frontend que espera JWT:
-                return Response({
-                    "access": "token-dummy-acceso-permitido",
-                    "refresh": "token-dummy-refresh",
-                    "message": "Login exitoso (Modo Simple)"
-                })
-
-            # Generar token real si la DB funciona
-            refresh = RefreshToken.for_user(user)
-            return Response({
-                'refresh': str(refresh),
-                'access': str(refresh.access_token),
-            })
-        else:
-            return Response({"detail": "Credenciales incorrectas"}, status=401)
-
-

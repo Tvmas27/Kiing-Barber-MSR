@@ -12,16 +12,16 @@ El proyecto incluye una landing pública, un formulario de reservas, un dashboar
 
 - `King_Barber/King_Barber/`: configuración principal de Django.
 - `King_Barber/core/`: app principal con vistas, URLs, templates y estáticos.
-- `render.yaml`: despliegue para Render.
+- `vercel.json` y `api/index.py`: despliegue para Vercel.
 - `requirements.txt`: dependencias del proyecto.
 - `runtime.txt`: versión de Python.
 
 ## Stack
 
 - Backend: Python 3.13, Django 5.2, Django REST Framework.
-- Datos: Firebase Firestore.
+- Datos y autenticación: Firebase Firestore y Firebase Authentication.
 - Frontend: HTML, Tailwind CSS por CDN y JavaScript vanilla.
-- Despliegue: Render con Gunicorn y WhiteNoise.
+- Despliegue: Vercel con una función WSGI y WhiteNoise.
 
 ## Variables de entorno
 
@@ -56,14 +56,14 @@ python manage.py migrate
 python manage.py runserver
 ```
 
-## Despliegue en Render
+## Despliegue en Vercel
 
-Render usa `render.yaml` como blueprint.
+Vercel ejecuta Django mediante `api/index.py`.
 
-- Build: instala dependencias, ejecuta `collectstatic` y luego migraciones.
-- Start: `gunicorn King_Barber.wsgi:application`.
-- Secretos: `SECRET_KEY` y `FIREBASE_CREDENTIALS`.
-- Dominios: `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS` y `CSRF_TRUSTED_ORIGINS` deben apuntar al dominio real.
+- Configura `SECRET_KEY`, `FIREBASE_CREDENTIALS` y `FIREBASE_ADMIN_UID` como secretos.
+- Configura también la configuración web pública de Firebase: `FIREBASE_API_KEY`, `FIREBASE_AUTH_DOMAIN`, `FIREBASE_PROJECT_ID`, `FIREBASE_STORAGE_BUCKET`, `FIREBASE_MESSAGING_SENDER_ID` y `FIREBASE_APP_ID`.
+- `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS` y `CSRF_TRUSTED_ORIGINS` deben incluir el dominio de producción.
+- El login del dashboard usa Firebase Authentication y el backend verifica el ID token con Firebase Admin.
 
 ## API
 
