@@ -2,8 +2,6 @@
 {% load static %}
 
 {% block content %}
-{{ firebase_config|json_script:"firebase-config" }}
-
 <!-- Login Section -->
 <div id="login-section" class="max-w-md mx-auto mt-10 bg-gris-oscuro p-8 rounded-lg border border-dorado shadow-2xl">
     <div class="text-center mb-8">
@@ -16,12 +14,12 @@
     
     <form id="login-form" class="space-y-6">
         <div>
-            <label class="block text-dorado text-sm font-bold mb-2">Correo electrónico</label>
+            <label class="block text-dorado text-sm font-bold mb-2">Usuario</label>
             <div class="relative">
                 <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-500">
                     <i class="fas fa-user"></i>
                 </span>
-                <input type="email" id="username" autocomplete="username" class="w-full pl-10 p-3 rounded bg-negro text-white border border-gris-borde focus:border-dorado outline-none transition-colors" placeholder="admin@dominio.com" required>
+                <input type="text" id="username" autocomplete="username" class="w-full pl-10 p-3 rounded bg-negro text-white border border-gris-borde focus:border-dorado outline-none transition-colors" placeholder="admin" required>
             </div>
         </div>
         <div>
@@ -238,13 +236,7 @@
 {% endblock %}
 
 {% block extra_js %}
-<script type="module">
-    import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js';
-    import { getAuth, signInWithEmailAndPassword, signOut } from 'https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js';
-
-    const firebaseConfig = JSON.parse(document.getElementById('firebase-config').textContent);
-    const firebaseApp = initializeApp(firebaseConfig);
-    const firebaseAuth = getAuth(firebaseApp);
+<script>
 
     // --- State & Elements ---
     const loginForm = document.getElementById('login-form');
@@ -350,7 +342,7 @@
         });
     }
 
-    let accessToken = null;
+    let accessToken = localStorage.getItem('access_token');
 
     // --- Initialization ---
     document.addEventListener('DOMContentLoaded', () => {
@@ -370,7 +362,10 @@
             }
         });
 
-        fetchWeeklySchedule(token);
+        if (accessToken) {
+            loadDashboard(accessToken);
+        }
+        fetchWeeklySchedule(accessToken);
         populateBlockHourOptions(blockHourDateInput.value);
     });
 
@@ -385,12 +380,22 @@
         btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
 
         try {
-            const credential = await signInWithEmailAndPassword(firebaseAuth, username, password);
-            accessToken = await credential.user.getIdToken();
+            const response = await fetch('/api/token/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                showLoginError(data.detail || 'Credenciales incorrectas.');
+                return;
+            }
+            accessToken = data.access;
+            localStorage.setItem('access_token', accessToken);
             await loadDashboard(accessToken);
         } catch (error) {
-            console.error('Firebase login error:', error.code);
-            showLoginError('Correo o contraseña incorrectos.');
+            console.error('Admin login error:', error);
+            showLoginError('Error de conexión. Intenta nuevamente.');
         } finally {
             btn.disabled = false;
             btn.innerText = 'INGRESAR';
@@ -405,7 +410,7 @@
 
     function logout() {
         accessToken = null;
-        signOut(firebaseAuth).catch(() => {});
+        localStorage.removeItem('access_token');
         location.reload();
     }
 

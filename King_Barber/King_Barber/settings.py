@@ -117,7 +117,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        'core.authentication.FirebaseAuthentication',
+        'core.admin_auth.AdminTokenAuthentication',
     ),
     'DEFAULT_THROTTLE_CLASSES': (
         'rest_framework.throttling.AnonRateThrottle',
@@ -126,6 +126,7 @@ REST_FRAMEWORK = {
         'anon': '120/minute',
         'booking': '10/hour',
         'cancellation': '10/hour',
+        'login': '5/minute',
     },
 }
 

@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: kiing-barber-msr
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt && python King_Barber/manage.py collectstatic --noinput
+    startCommand: gunicorn --chdir King_Barber King_Barber.wsgi:application
+    autoDeploy: true
+    envVars:
+      - key: DEBUG
+        value: "False"
+      - key: SECRET_KEY
+        sync: false
+      - key: ALLOWED_HOSTS
+        value: kiing-barber-msr.onrender.com
+      - key: CORS_ALLOWED_ORIGINS
+        value: https://kiing-barber-msr.onrender.com
+      - key: CSRF_TRUSTED_ORIGINS
+        value: https://kiing-barber-msr.onrender.com
+      - key: SECURE_HSTS_SECONDS
+        value: "31536000"
+      - key: FIREBASE_CREDENTIALS
+        sync: false
+      - key: ADMIN_USER
+        sync: false
+      - key: ADMIN_PASSWORD_HASH
+        sync: false

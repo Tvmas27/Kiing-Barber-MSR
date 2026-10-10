@@ -4,14 +4,16 @@ from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.throttling import AnonRateThrottle
 from firebase_admin import firestore
 from google.api_core.exceptions import AlreadyExists
+from .admin_auth import authenticate_admin
 import csv
 import datetime
 import logging
 import re
+from django.core import signing
 
 
 logger = logging.getLogger(__name__)
@@ -26,6 +28,10 @@ class BookingThrottle(AnonRateThrottle):
 
 class CancellationThrottle(AnonRateThrottle):
     scope = 'cancellation'
+
+
+class LoginThrottle(AnonRateThrottle):
+    scope = 'login'
 
 
 def _clean_reservation(data):
@@ -159,6 +165,23 @@ def get_available_hours_for_date(date_str, db=None):
 
 def index(request):
     return render(request, 'core/home.html')
+
+
+class AdminLoginView(APIView):
+    permission_classes = [AllowAny]
+    throttle_classes = [LoginThrottle]
+
+    def post(self, request):
+        username = request.data.get('username', '')
+        password = request.data.get('password', '')
+        if not isinstance(username, str) or not isinstance(password, str):
+            return Response({'detail': 'Credenciales incorrectas'}, status=401)
+
+        if not authenticate_admin(username.strip(), password):
+            return Response({'detail': 'Credenciales incorrectas'}, status=401)
+
+        token = signing.TimestampSigner().sign(username.strip())
+        return Response({'access': token, 'expires_in': 3600})
 
 class DashboardDataView(APIView):
     permission_classes = [IsAuthenticated]

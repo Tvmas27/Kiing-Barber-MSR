@@ -3,6 +3,7 @@ from . import views
 urlpatterns = [
     path('', views.index, name='index'),
     path('dashboard/', views.dashboard_view, name='dashboard'),
+    path('api/token/', views.AdminLoginView.as_view(), name='admin_login'),
     
     # API Endpoints
     path('api/reservas/', views.DashboardDataView.as_view(), name='api_reservas'),
