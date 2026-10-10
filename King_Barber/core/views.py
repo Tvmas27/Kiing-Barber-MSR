@@ -59,6 +59,7 @@ def _clean_reservation(data):
 
 
 def _safe_error(operation, exc):
+    print(f'Firestore operation failed: {operation}: {type(exc).__name__}: {exc}', flush=True)
     logger.exception('Error en %s: %s', operation, exc)
     return Response({'status': 'error', 'message': 'No se pudo completar la operación'}, status=500)
 import unicodedata
