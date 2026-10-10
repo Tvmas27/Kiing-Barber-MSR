@@ -10,7 +10,7 @@
   "routes": [
     {
       "src": "/static/(.*)",
-      "dest": "/King_Barber/core/static/$1"
+      "dest": "/img/$1"
     },
     {
       "src": "/(.*)",
