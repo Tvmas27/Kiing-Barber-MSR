@@ -49,8 +49,12 @@ else:
 ALLOWED_HOSTS = env_list('ALLOWED_HOSTS', '127.0.0.1,localhost')
 
 if not DEBUG:
-    for vercel_host in ('VERCEL_URL', 'VERCEL_PROJECT_PRODUCTION_URL'):
-        host = os.getenv(vercel_host)
+    for platform_host in (
+        'RENDER_EXTERNAL_HOSTNAME',
+        'VERCEL_URL',
+        'VERCEL_PROJECT_PRODUCTION_URL',
+    ):
+        host = os.getenv(platform_host)
         if host and host not in ALLOWED_HOSTS:
             ALLOWED_HOSTS.append(host)
 
@@ -148,6 +152,7 @@ CORS_ALLOW_ALL_ORIGINS = DEBUG
 if not DEBUG:
     # Obtener variables y filtrar cadenas vacías
     vercel_origins = [
+        vercel_origin('RENDER_EXTERNAL_HOSTNAME'),
         vercel_origin('VERCEL_URL'),
         vercel_origin('VERCEL_PROJECT_PRODUCTION_URL'),
     ]
